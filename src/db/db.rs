@@ -120,6 +120,46 @@ impl Database {
         Database::move_to_past(&mut tx, id).await?; // note to myself: Transaction is rolled back if it goes out of scope
         // Add free balance
         Database::edit_current_balance(&mut tx, id, currency, volume, volume).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    #[lock_master::locker(id)]
+    pub async fn block_free_balance(&self, id: UserIdType, currency: String, volume: i64) -> Result<()> {
+        // Start a transaction
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
+        // Move balance to past
+        Database::move_to_past(&mut tx, id).await?; // note to myself: Transaction is rolled back if it goes out of scope
+        // Block balance by only removing free balance
+        Database::edit_current_balance(&mut tx, id, currency, -volume, 0).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    #[lock_master::locker(id)]
+    pub async fn unblock_blocked_balance(&self, id: UserIdType, currency: String, volume: i64) -> Result<()> {
+        // Start a transaction
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
+        // Move balance to past
+        Database::move_to_past(&mut tx, id).await?; // note to myself: Transaction is rolled back if it goes out of scope
+        // Block balance by only adding free balance
+        Database::edit_current_balance(&mut tx, id, currency, volume, 0).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    #[lock_master::locker(id)]
+    pub async fn withdraw_blocked_balance(&self, id: UserIdType, currency: String, volume: i64) -> Result<()> {
+        // Start a transaction
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
+        // Move balance to past
+        Database::move_to_past(&mut tx, id).await?; // note to myself: Transaction is rolled back if it goes out of scope
+        // Just remove from total
+        Database::edit_current_balance(&mut tx, id, currency, 0, -volume).await?;
+        tx.commit().await?;
         Ok(())
     }
 

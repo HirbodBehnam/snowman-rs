@@ -10,7 +10,9 @@ struct ErrorMessage {
 macro_rules! check_error {
     ($result:expr) => {
         match $result {
-            Ok(_) => {},
+            Ok(res) => {
+                return Ok(warp::reply::json(&res).into_response());
+            },
             Err(e) => {
                 return Ok(from_error(e));
             }
@@ -31,5 +33,13 @@ fn error_message(message: String, status: u16) -> warp::reply::Response {
         .body(serde_json::to_string(&ErrorMessage {
             error: message,
         }).unwrap())
+        .into_response()
+}
+
+#[inline]
+pub fn empty_json() -> warp::reply::Response {
+    warp::http::Response::builder()
+        .header(warp::http::header::CONTENT_TYPE, "application/json")
+        .body("{}")
         .into_response()
 }

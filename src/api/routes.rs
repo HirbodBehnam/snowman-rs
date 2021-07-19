@@ -43,11 +43,36 @@ pub async fn run_server(listen_address: &str, database: Database) {
     let add_free_balance = users_path.and(warp::post()
         .and(warp::path("free"))
         .and(warp::path("add"))
-        .and(warp::body::content_length_limit(MAX_REQUEST_SIZE))
-        .and(warp::body::json())
-        .and(database.clone())
+        .and(warp::path::end())
+        .and(body_limiter.clone())
         .and_then(add_free_balance));
-    let final_routes = add_free_balance.or(register).or(get_free_balance);
+    let withdraw_free_balance = users_path.and(warp::post()
+        .and(warp::path("free"))
+        .and(warp::path("withdraw"))
+        .and(warp::path::end())
+        .and(body_limiter.clone())
+        .and_then(withdraw_free_balance));
+    let block_free_balance = users_path.and(warp::post()
+        .and(warp::path("free"))
+        .and(warp::path("block"))
+        .and(warp::path::end())
+        .and(body_limiter.clone())
+        .and_then(block_free_balance));
+    let unblock_blocked_balance = users_path.and(warp::post()
+        .and(warp::path("block"))
+        .and(warp::path("unblock"))
+        .and(warp::path::end())
+        .and(body_limiter.clone())
+        .and_then(unblock_blocked_balance));
+    let withdraw_blocked_balance = users_path.and(warp::post()
+        .and(warp::path("block"))
+        .and(warp::path("withdraw"))
+        .and(warp::path::end())
+        .and(body_limiter.clone())
+        .and_then(withdraw_blocked_balance));
+    let final_routes = add_free_balance.or(register)
+        .or(get_free_balance).or(withdraw_free_balance).or(block_free_balance)
+        .or(unblock_blocked_balance).or(withdraw_blocked_balance);
     warp::serve(final_routes)
         .run(listen_address.parse::<SocketAddr>().expect("invalid listen address"))
         .await;
@@ -65,14 +90,12 @@ pub async fn run_server(listen_address: &str, database: Database) {
 ///
 async fn register(user: UserQuery, db: Arc<Database>) -> Result<warp::reply::Response, warp::Rejection> {
     let result = db.register_user(user.user_id).await;
-    check_error!(result);
-    Ok(empty_json())
+    check_error!(result)
 }
 
 async fn get_free_balance(user: UserQuery, db: Arc<Database>) -> Result<warp::reply::Response, warp::Rejection> {
     let result = db.get_balances(user.user_id).await;
-    check_error!(result);
-    Ok(warp::reply::json(&result.unwrap()).into_response())
+    check_error!(result)
 }
 
 async fn add_free_balance(
@@ -80,14 +103,37 @@ async fn add_free_balance(
     db: Arc<Database>,
 ) -> Result<warp::reply::Response, warp::Rejection> {
     let result = db.add_free_balance(request.user_id, request.sign, request.amount).await;
-    check_error!(result);
-    Ok(empty_json())
+    check_error!(result)
 }
 
-#[inline]
-fn empty_json() -> warp::reply::Response {
-    warp::http::Response::builder()
-        .header(warp::http::header::CONTENT_TYPE, "application/json")
-        .body("{}")
-        .into_response()
+async fn withdraw_free_balance(
+    request: ChangeBalanceRequest,
+    db: Arc<Database>,
+) -> Result<warp::reply::Response, warp::Rejection> {
+    let result = db.add_free_balance(request.user_id, request.sign, -request.amount).await;
+    check_error!(result)
+}
+
+async fn block_free_balance(
+    request: ChangeBalanceRequest,
+    db: Arc<Database>,
+) -> Result<warp::reply::Response, warp::Rejection> {
+    let result = db.block_free_balance(request.user_id, request.sign, -request.amount).await;
+    check_error!(result)
+}
+
+async fn unblock_blocked_balance(
+    request: ChangeBalanceRequest,
+    db: Arc<Database>,
+) -> Result<warp::reply::Response, warp::Rejection> {
+    let result = db.unblock_blocked_balance(request.user_id, request.sign, -request.amount).await;
+    check_error!(result)
+}
+
+async fn withdraw_blocked_balance(
+    request: ChangeBalanceRequest,
+    db: Arc<Database>,
+) -> Result<warp::reply::Response, warp::Rejection> {
+    let result = db.withdraw_blocked_balance(request.user_id, request.sign, -request.amount).await;
+    check_error!(result)
 }
