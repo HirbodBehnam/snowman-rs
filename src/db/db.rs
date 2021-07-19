@@ -60,6 +60,26 @@ macro_rules! read_raw_balances {
     } as anyhow::Result<HashMap<String, DatabaseBalances>>};
 }
 
+/// Checks an Result and rolls back a transaction and returns from function if the result is Err
+///
+/// # Arguments
+/// First argument must be transaction and the second one must be result
+///
+/// # Example
+///
+/// ```
+/// let mut tx = conn.begin().await?;
+/// try_rollback!(tx, Database::my_function(&mut tx, id).await);
+/// ```
+macro_rules! try_rollback {
+    ($tx:expr,$result:expr) => {{
+        if let Err(err) = $result {
+            let _ = $tx.rollback().await;
+            return Err(err.into());
+        }
+    }};
+}
+
 impl Database {
     pub async fn new(uri: &str) -> Self {
         let pool = MySqlPoolOptions::new()
@@ -117,9 +137,9 @@ impl Database {
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
         // Move balance to past
-        Database::move_to_past(&mut tx, id).await?; // note to myself: Transaction is rolled back if it goes out of scope
+        try_rollback!(tx, Database::move_to_past(&mut tx, id).await);
         // Add free balance
-        Database::edit_current_balance(&mut tx, id, currency, volume, volume).await?;
+        try_rollback!(tx, Database::edit_current_balance(&mut tx, id, currency, volume, volume).await);
         tx.commit().await?;
         Ok(())
     }
@@ -130,9 +150,9 @@ impl Database {
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
         // Move balance to past
-        Database::move_to_past(&mut tx, id).await?; // note to myself: Transaction is rolled back if it goes out of scope
+        try_rollback!(tx, Database::move_to_past(&mut tx, id).await);
         // Block balance by only removing free balance
-        Database::edit_current_balance(&mut tx, id, currency, -volume, 0).await?;
+        try_rollback!(tx, Database::edit_current_balance(&mut tx, id, currency, -volume, 0).await);
         tx.commit().await?;
         Ok(())
     }
@@ -143,9 +163,9 @@ impl Database {
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
         // Move balance to past
-        Database::move_to_past(&mut tx, id).await?; // note to myself: Transaction is rolled back if it goes out of scope
+        try_rollback!(tx, Database::move_to_past(&mut tx, id).await);
         // Block balance by only adding free balance
-        Database::edit_current_balance(&mut tx, id, currency, volume, 0).await?;
+        try_rollback!(tx, Database::edit_current_balance(&mut tx, id, currency, volume, 0).await);
         tx.commit().await?;
         Ok(())
     }
@@ -156,9 +176,9 @@ impl Database {
         let mut conn = self.pool.acquire().await?;
         let mut tx = conn.begin().await?;
         // Move balance to past
-        Database::move_to_past(&mut tx, id).await?; // note to myself: Transaction is rolled back if it goes out of scope
+        try_rollback!(tx, Database::move_to_past(&mut tx, id).await);
         // Just remove from total
-        Database::edit_current_balance(&mut tx, id, currency, 0, -volume).await?;
+        try_rollback!(tx, Database::edit_current_balance(&mut tx, id, currency, 0, -volume).await);
         tx.commit().await?;
         Ok(())
     }
