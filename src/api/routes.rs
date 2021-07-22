@@ -1,16 +1,22 @@
 use serde::Deserialize;
 use warp::{Filter, Reply};
-use crate::db::db::Database;
+use crate::db::db::{Database, Balances};
 use std::sync::Arc;
 use crate::check_error;
-use crate::api::errors::errors::from_error;
+use crate::api::errors::errors::{from_error, empty_json};
 use std::net::SocketAddr;
 
 /// Max request size in bytes
 const MAX_REQUEST_SIZE: u64 = 1024;
 
+/// A structure to parse the query of some requests like get balance or register user
 #[derive(Deserialize)]
 struct UserQuery {
+    /// The currency which is used in get balance request
+    currency: Option<String>,
+    /// The time to get the balances in
+    timestamp: Option<u64>,
+    /// The user ID to get the balance or register
     user_id: u32,
 }
 
@@ -21,6 +27,12 @@ struct ChangeBalanceRequest {
     user_id: u32,
 }
 
+/// Runs the server with given database
+///
+/// # Arguments
+///
+/// * `listen_address`: Which address we should listen on
+/// * `database`: The database which we must use
 pub async fn run_server(listen_address: &str, database: Database) {
     let database = Arc::new(database);
     let database = warp::any().map(move || database.clone());
@@ -90,12 +102,23 @@ pub async fn run_server(listen_address: &str, database: Database) {
 ///
 async fn register(user: UserQuery, db: Arc<Database>) -> Result<warp::reply::Response, warp::Rejection> {
     let result = db.register_user(user.user_id).await;
-    check_error!(result)
+    check_error!(result, ())
 }
 
 async fn get_free_balance(user: UserQuery, db: Arc<Database>) -> Result<warp::reply::Response, warp::Rejection> {
-    let result = db.get_balances(user.user_id).await;
-    check_error!(result)
+    let balance = match user.timestamp {
+        None => db.get_balances(user.user_id).await,
+        Some(time) => db.get_past_balance(user.user_id, time).await,
+    };
+    Ok(match balance {
+        Ok(balance) => {
+            match user.currency {
+                None => warp::reply::json(&balance),
+                Some(currency) => warp::reply::json(balance.get(currency.as_str()).unwrap_or(&Balances::default())),
+            }.into_response()
+        },
+        Err(err) => from_error(err)
+    })
 }
 
 async fn add_free_balance(
@@ -103,7 +126,7 @@ async fn add_free_balance(
     db: Arc<Database>,
 ) -> Result<warp::reply::Response, warp::Rejection> {
     let result = db.add_free_balance(request.user_id, request.sign, request.amount).await;
-    check_error!(result)
+    check_error!(result, ())
 }
 
 async fn withdraw_free_balance(
@@ -111,29 +134,29 @@ async fn withdraw_free_balance(
     db: Arc<Database>,
 ) -> Result<warp::reply::Response, warp::Rejection> {
     let result = db.add_free_balance(request.user_id, request.sign, -request.amount).await;
-    check_error!(result)
+    check_error!(result, ())
 }
 
 async fn block_free_balance(
     request: ChangeBalanceRequest,
     db: Arc<Database>,
 ) -> Result<warp::reply::Response, warp::Rejection> {
-    let result = db.block_free_balance(request.user_id, request.sign, -request.amount).await;
-    check_error!(result)
+    let result = db.block_free_balance(request.user_id, request.sign, request.amount).await;
+    check_error!(result, ())
 }
 
 async fn unblock_blocked_balance(
     request: ChangeBalanceRequest,
     db: Arc<Database>,
 ) -> Result<warp::reply::Response, warp::Rejection> {
-    let result = db.unblock_blocked_balance(request.user_id, request.sign, -request.amount).await;
-    check_error!(result)
+    let result = db.unblock_blocked_balance(request.user_id, request.sign, request.amount).await;
+    check_error!(result, ())
 }
 
 async fn withdraw_blocked_balance(
     request: ChangeBalanceRequest,
     db: Arc<Database>,
 ) -> Result<warp::reply::Response, warp::Rejection> {
-    let result = db.withdraw_blocked_balance(request.user_id, request.sign, -request.amount).await;
-    check_error!(result)
+    let result = db.withdraw_blocked_balance(request.user_id, request.sign, request.amount).await;
+    check_error!(result, ())
 }

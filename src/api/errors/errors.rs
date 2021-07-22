@@ -18,6 +18,16 @@ macro_rules! check_error {
             }
         }
     };
+    ($result:expr, ()) => {
+        match $result {
+            Ok(_) => {
+                return Ok(empty_json());
+            },
+            Err(e) => {
+                return Ok(from_error(e));
+            }
+        }
+    };
 }
 
 #[inline]

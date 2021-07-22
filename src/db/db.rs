@@ -4,12 +4,12 @@ use sqlx::mysql::{MySqlPoolOptions, MySqlQueryResult};
 use sqlx::{Connection, MySql, Pool, Transaction};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tokio::sync::Mutex;
 
 type UserIdType = u32;
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 pub struct Balances {
     pub free: i64,
     pub blocked: i64,
@@ -98,7 +98,7 @@ impl Database {
         tx: &mut Transaction<'_, sqlx::MySql>,
         user_id: UserIdType,
     ) -> Result<MySqlQueryResult, sqlx::Error> {
-        sqlx::query("INSERT INTO `past_balance` (`user_id`,`balances`,`changed`) SELECT `user_id`, `balances`, NOW() FROM `current_balance` WHERE `user_id`=?")
+        sqlx::query("INSERT INTO `past_balance` (`user_id`,`balances`,`changed`) SELECT `user_id`, `balances`, UNIX_TIMESTAMP() FROM `current_balance` WHERE `user_id`=?")
             .bind(user_id)
             .execute(tx)
             .await
@@ -123,11 +123,64 @@ impl Database {
         Ok(())
     }
 
+    ///
+    ///
+    /// # Arguments
+    ///
+    /// * `id`:
+    ///
+    /// returns: Result<HashMap<String, Balances, RandomState>, Error>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
     #[lock_master::locker(id)]
     pub async fn get_balances(&self, id: UserIdType) -> Result<HashMap<String, Balances>> {
         // Get the balance with a connection
         let mut conn = self.pool.acquire().await?;
         let result = read_balances!(&mut conn, id)?;
+        Ok(result)
+    }
+
+    #[lock_master::locker(id)]
+    pub async fn get_past_balance(&self, id: UserIdType, time: u64) -> Result<HashMap<String, Balances>> {
+        // Get the balance with a connection
+        let mut conn = self.pool.acquire().await?;
+        // Get current time and check if the time provided is after now
+        if SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("IM-FUCKING-POSSIBLE").as_secs() <= time {
+            return read_balances!(&mut conn, id);
+        }
+        // Get the balance
+        let db_balances_json: sqlx::Result<(String,)> =
+            sqlx::query_as("SELECT `balances` FROM `past_balance` WHERE `user_id`=? AND `changed` <= ?")
+                .bind(id)
+                .bind(time)
+                .fetch_one(&mut conn)
+                .await;
+        if let Err(err) = db_balances_json {
+            return if let sqlx::Error::RowNotFound = err {
+                Ok(HashMap::new())
+            } else {
+                Err(err.into())
+            }
+        }
+        let db_balances_json = db_balances_json.unwrap();
+        let db_balances_raw =
+            serde_json::from_str::<HashMap<String, DatabaseBalances>>(db_balances_json.0.as_str())?;
+        // Convert the data
+        let mut result = HashMap::with_capacity(db_balances_raw.capacity());
+        for (currency, data) in db_balances_raw {
+            result.insert(
+                currency,
+                Balances {
+                    free: data.free,
+                    blocked: data.total - data.free,
+                    total: data.total,
+                },
+            );
+        }
         Ok(result)
     }
 
